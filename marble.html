@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Rotating Pixelized Globe</title>
+    <style>
+        body { background: #222; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        canvas { background: #111; border-radius: 50%; }
+    </style>
+</head>
+<body>
+    <canvas id="globe" width="600" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('globe');
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+        const radius = width / 2 * 0.95;
+
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = 'Blue_Marble_2002.png';
+
+        let rotation = 0;
+
+        img.onload = function() {
+            animate();
+        };
+
+        function animate() {
+            ctx.clearRect(0, 0, width, height);
+
+            // Draw globe shadow
+            ctx.save();
+            ctx.translate(width/2, height/2);
+            ctx.beginPath();
+            ctx.arc(0, 0, radius, 0, 2 * Math.PI);
+            ctx.clip();
+
+            // Draw the map as a texture on the sphere
+            const mapWidth = img.width;
+            const mapHeight = img.height;
+
+            // Orthographic projection: for each vertical pixel row, map to latitude
+            const steps = 600; // one per vertical pixel for smoothness
+            for (let y = -radius; y < radius; y++) {
+                const normY = y / radius;
+                if (normY < -1 || normY > 1) continue;
+                const lat = Math.asin(-normY); // latitude in radians
+
+                // Calculate the width of the visible circle at this latitude
+                const circleRadius = Math.cos(lat) * radius;
+                if (circleRadius <= 0.5) continue; // skip degenerate rows
+
+                // For each x along this row, map to longitude
+                for (let x = -circleRadius; x < circleRadius; x++) {
+                    const normX = x / radius;
+                    const lon = Math.atan2(normX, Math.sqrt(1 - normX * normX)) + rotation;
+
+                    // Map longitude and latitude to image coordinates
+                    let u = ((lon / (2 * Math.PI)) + 0.5) * img.width;
+                    u = ((u % img.width) + img.width) % img.width;
+                    const v = ((lat / Math.PI) + 0.5) * img.height;
+
+                    // Get pixel color from the map
+                    // To avoid performance issues, use getImageData once per row
+                    // We'll use drawImage for each pixel for simplicity
+                    ctx.fillStyle = getColorFromMap(img, u, v);
+                    ctx.fillRect(width/2 + x, height/2 + y, 1, 1);
+                }
+            }
+
+            // Helper function to get color from the map image
+            function getColorFromMap(image, u, v) {
+                // Create a temporary canvas to extract pixel data
+                if (!getColorFromMap.tempCanvas) {
+                    getColorFromMap.tempCanvas = document.createElement('canvas');
+                    getColorFromMap.tempCanvas.width = image.width;
+                    getColorFromMap.tempCanvas.height = image.height;
+                    getColorFromMap.tempCtx = getColorFromMap.tempCanvas.getContext('2d');
+                    getColorFromMap.tempCtx.drawImage(image, 0, 0);
+                }
+                const x = Math.floor(u);
+                const y = Math.floor(v);
+                const data = getColorFromMap.tempCtx.getImageData(x, y, 1, 1).data;
+                return `rgba(${data[0]},${data[1]},${data[2]},${data[3]/255})`;
+            }
+
+            ctx.restore();
+
+            // Draw globe outline
+            ctx.beginPath();
+            ctx.arc(width/2, height/2, radius, 0, 2 * Math.PI);
+            ctx.strokeStyle = "#fff";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            rotation += 0.008;
+            requestAnimationFrame(animate);
+        }
+    </script>
+</body>
+</html>
