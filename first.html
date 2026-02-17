@@ -1,17 +1,18 @@
-<!doctype html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <title>Terravision</title>
+    <meta charset="UTF-8">
+    <title>Rotating ASCII Globe</title>
+    <style>
+        body { background: #222; color: #fff; font-family: monospace; }
+        pre { line-height: 80%; font-size: 8px; }
+    </style>
 </head>
-<body style="margin:0; background:#111;">
-  <canvas id="c" width="400" height="400"></canvas>
-
-  <script>
-    /*****************************************************************
-     * Input: 2D character map (equirectangular / lat-long)
-     *   x => longitude  (0..360)
-     *   y => latitude   (90N..90S)
-     *****************************************************************/
-    const WORLD_STRINGS = [
+<body>
+<canvas id="globeCanvas" width="1600" height="900" style="background:#222;display:block;"></canvas>
+<script>
+    console.log('Rotating ASCII Globe');
+    const asciiMap = [
 "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------",
 "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------",
 "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------",
@@ -461,103 +462,87 @@
 "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------",
 "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------",
 ];
+    var globeSize = 250; // Canvas size in pixels
+    var charSize = 4;    // Smaller block size for more detail
+    var globeRadius = globeSize / 2 - charSize;
+    var canvas = document.getElementById('globeCanvas');
+    var ctx = canvas.getContext('2d');
+    var mapWidth = 757;
+    var mapHeight = 450;
 
-    /* Convert to 2D char array: world[y][x] */
-    var world = [];
-    var mapH = WORLD_STRINGS.length;
-    var mapW = WORLD_STRINGS[0].length;
-
-    for (var y = 0; y < mapH; y++) {
-      world[y] = [];
-      for (var x = 0; x < mapW; x++) {
-        world[y][x] = WORLD_STRINGS[y].charAt(x);
-      }
-    }
-
-    /* Canvas */
-    var canvas = document.getElementById("c");
-    var ctx = canvas.getContext("2d");
-    var W = canvas.width;
-    var H = canvas.height;
-
-    var cx = W / 2;
-    var cy = H / 2;
-    var radius = 180;
-    var r2 = radius * radius;
-
-    var rot = 0;
-
-    function renderFrame() {
-      rot = rot + 0.042;
-
-      /* clear background */
-      ctx.fillStyle = "black";
-      ctx.fillRect(0, 0, W, H);
-
-      var cosr = Math.cos(rot);
-      var sinr = Math.sin(rot);
-
-      for (var py = 0; py < H; py++) {
-        var sy = -(py + 0.5 - cy);
-        var sy2 = sy * sy;
-
-        for (var px = 0; px < W; px++) {
-          var sx = (px + 0.5 - cx);
-          var d2 = sx * sx + sy2;
-
-          if (d2 <= r2) {
-            /* front hemisphere z */
-            var z = Math.sqrt(r2 - d2);
-
-            /* normalized point on sphere */
-            var nx = sx / radius;
-            var ny = sy / radius;
-            var nz = z  / radius;
-
-            /* rotate around Y axis */
-            var wx =  cosr * nx + sinr * nz;
-            var wy =  ny;
-            var wz = -sinr * nx + cosr * nz;
-
-            /* lon/lat */
-            var lon = Math.atan2(wx, wz);
-            var lat = Math.asin(wy);
-
-            /* u,v */
-            var u = (lon / (2 * Math.PI)) + 0.5;
-            var v = 0.5 - (lat / Math.PI);
-
-            /* wrap u */
-            while (u < 0) u = u + 1;
-            while (u >= 1) u = u - 1;
-
-            /* clamp v */
-            if (v < 0) v = 0;
-            if (v > 1) v = 1;
-
-            /* sample char */
-            var tx = Math.floor(u * mapW);
-            var ty = Math.floor(v * mapH);
-
-            if (tx < 0) tx = 0;
-            if (tx >= mapW) tx = mapW - 1;
-            if (ty < 0) ty = 0;
-            if (ty >= mapH) ty = mapH - 1;
-
-            var ch = world[ty][tx];
-
-            /* color: ocean blue, land green */
-            if (ch === "W") ctx.fillStyle = "green";
-            else ctx.fillStyle = "blue";
-
-            ctx.fillRect(px, py, 1, 1);
-          }
+    function renderGlobe0(angle) {
+        ctx.clearRect(0, 0, globeSize, globeSize);
+        for (var y = 0; y < mapHeight; y += 1) {
+            for (var x = 0; x < mapWidth; x += 1) {
+                var ch = asciiMap[y][x];
+                if (ch === 'W') {
+                    ctx.fillStyle = "#fff";
+                    ctx.fillRect( x, y, 1,1);
+                }
+            }
         }
-      }
-      requestAnimationFrame(renderFrame);
     }
 
-    renderFrame();
-  </script>
+    function renderGlobe1(angle) {
+        ctx.clearRect(0, 0, globeSize, globeSize);
+        for (var y = 0; y < mapHeight; y += 1) {
+            for (var x = 0; x < mapHeight; x += 1) {
+                let xx = Math.abs(x-mapHeight/2);
+                let mapY = y;
+                let mapX = Math.round(x+(mapWidth-mapHeight)*2*angle/Math.PI);
+                if (mapX > mapWidth) mapX -= mapWidth;
+                var ch = asciiMap[mapY][mapX];
+                if (ch === 'W') {
+                    ctx.fillStyle = "#0f0";
+                } else {
+                    ctx.fillStyle = "#00f"; // Background color
+                }
+                ctx.fillRect(x, mapHeight/2+(y-mapHeight/2)*Math.cos(xx*Math.PI/mapHeight), charSize, charSize);
+            }
+        }
+    }
+    function renderGlobe17(angle) {
+        ctx.clearRect(0, 0, globeSize, globeSize);
+        for (var y = -globeRadius; y < globeRadius; y += 1) {
+            for (var x = -globeRadius; x < globeRadius; x += 0.5) {
+                var r = Math.sqrt(x*x + y*y);
+                if (r > globeRadius) continue;
+                // Spherical coordinates
+                var lat = Math.asin(y / globeRadius); // -PI/2 ... PI/2
+                var lon;
+                lon = Math.atan2(x, Math.sqrt(globeRadius*globeRadius - y*y)) + angle; // -PI ... PI
+                lon = Math.atan2(x*Math.cos(Math.cos(x*Math.PI/mapWidth)), Math.sqrt(globeRadius*globeRadius - y*y)) + angle; // -PI ... PI
+                // Map to asciiMap
+                var mapX = Math.floor(((lon + Math.PI) / (2 * Math.PI)) * mapWidth);
+                var mapY = Math.floor(((lat + Math.PI/2) / Math.PI) * mapHeight);
+                if (mapX < 0) mapX += mapWidth;
+                if (mapX >= mapWidth) mapX -= mapWidth;
+                if (mapY < 0) mapY = 0;
+                if (mapY >= mapHeight) mapY = mapHeight - 1;
+                var ch = asciiMap[mapY][mapX];
+                if (ch === 'W') {
+                    ctx.fillStyle = "#0f0";
+                } else {
+                    ctx.fillStyle = "#00f"; // Background color
+                }
+                ctx.fillRect(
+                    Math.round(x + globeSize/2),
+                    Math.round(y + globeSize/2),
+                    charSize, charSize
+                );
+            }
+        }
+    }
+
+    var angle = 0;
+    function animate() {
+        renderGlobe17(angle);
+        angle += 0.02; if (angle > 2 * Math.PI) angle -= 2 * Math.PI;
+        window.requestAnimationFrame(animate);
+    }
+
+    animate();
+
+</script>
 </body>
 </html>

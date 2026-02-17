@@ -3,7 +3,7 @@
   <title>Terravision</title>
 </head>
 <body style="margin:0; background:#111;">
-  <canvas id="c" width="400" height="400"></canvas>
+  <canvas id="c" width="320" height="320"></canvas>
 
   <script>
     /*****************************************************************
@@ -462,102 +462,173 @@
 "-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------",
 ];
 
-    /* Convert to 2D char array: world[y][x] */
-    var world = [];
-    var mapH = WORLD_STRINGS.length;
-    var mapW = WORLD_STRINGS[0].length;
+    // Convert to 2D char array and normalize to rectangular
+    function normalizeRect(strings, padChar = "-") {
+      const rows = strings.map(r => r.split(""));
+      const w = Math.max(...rows.map(r => r.length));
+      return rows.map(r => {
+        const out = r.slice(0, w);
+        while (out.length < w) out.push(padChar);
+        return out;
+      });
+    }
+    const world = normalizeRect(WORLD_STRINGS, "-");
+    const mapH = world.length;
+    const mapW = world[0].length;
 
-    for (var y = 0; y < mapH; y++) {
-      world[y] = [];
-      for (var x = 0; x < mapW; x++) {
-        world[y][x] = WORLD_STRINGS[y].charAt(x);
+    /*****************************************************************
+     * Char -> RGB (no alpha; background handled separately)
+     *****************************************************************/
+    function charToRGB(ch) {
+      switch (ch) {
+        case "-": return [10, 30, 70];      // ocean
+        case "W": return [20, 120, 40];     // land
+        case "^": return [140, 140, 140];   // mountains
+        default:  return [200, 200, 200];
       }
     }
 
-    /* Canvas */
-    var canvas = document.getElementById("c");
-    var ctx = canvas.getContext("2d");
-    var W = canvas.width;
-    var H = canvas.height;
+    /*****************************************************************
+     * Precompute an RGB lookup table for the char map for fast sampling
+     *****************************************************************/
+    const mapRGB = new Uint8ClampedArray(mapW * mapH * 3);
+    for (let y = 0; y < mapH; y++) {
+      for (let x = 0; x < mapW; x++) {
+        const [r,g,b] = charToRGB(world[y][x]);
+        const i = (y * mapW + x) * 3;
+        mapRGB[i] = r; mapRGB[i+1] = g; mapRGB[i+2] = b;
+      }
+    }
 
-    var cx = W / 2;
-    var cy = H / 2;
-    var radius = 180;
-    var r2 = radius * radius;
+    /*****************************************************************
+     * Canvas globe renderer (software)
+     *****************************************************************/
+    const canvas = document.getElementById("c");
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width, H = canvas.height;
 
-    var rot = 0;
+    const img = ctx.createImageData(W, H);
+    const pix = img.data;
 
-    function renderFrame() {
-      rot = rot + 0.042;
+    const cx = W / 2, cy = H / 2;
+    const radius = Math.min(W, H) * 0.45;  // leave a small margin
+    const r2 = radius * radius;
 
-      /* clear background */
-      ctx.fillStyle = "black";
-      ctx.fillRect(0, 0, W, H);
+    // Light direction (normalized), in view space
+    // Slightly from upper-right/front
+    const L = normalize3([0.6, 0.4, 0.7]);
 
-      var cosr = Math.cos(rot);
-      var sinr = Math.sin(rot);
+    function normalize3(v) {
+      const len = Math.hypot(v[0], v[1], v[2]) || 1;
+      return [v[0]/len, v[1]/len, v[2]/len];
+    }
 
-      for (var py = 0; py < H; py++) {
-        var sy = -(py + 0.5 - cy);
-        var sy2 = sy * sy;
+    // Helpers: clamp + sample map
+    const clamp01 = (t) => t < 0 ? 0 : (t > 1 ? 1 : t);
 
-        for (var px = 0; px < W; px++) {
-          var sx = (px + 0.5 - cx);
-          var d2 = sx * sx + sy2;
+    function sampleMapRGB(u, v) {
+      // u in [0,1) longitude left->right, v in [0,1] latitude top->bottom
+      // wrap horizontally
+      u = u - Math.floor(u);
+      v = clamp01(v);
 
-          if (d2 <= r2) {
-            /* front hemisphere z */
-            var z = Math.sqrt(r2 - d2);
+      const x = Math.floor(u * mapW) % mapW;
+      const y = Math.min(mapH - 1, Math.max(0, Math.floor(v * mapH)));
+      const i = (y * mapW + x) * 3;
+      return [mapRGB[i], mapRGB[i+1], mapRGB[i+2]];
+    }
 
-            /* normalized point on sphere */
-            var nx = sx / radius;
-            var ny = sy / radius;
-            var nz = z  / radius;
+    // Rotation around Y axis (spin)
+    let rot = 0;
 
-            /* rotate around Y axis */
-            var wx =  cosr * nx + sinr * nz;
-            var wy =  ny;
-            var wz = -sinr * nx + cosr * nz;
+    function renderFrame(dt) {
+      rot += dt * 0.6; // radians per second
 
-            /* lon/lat */
-            var lon = Math.atan2(wx, wz);
-            var lat = Math.asin(wy);
+      // Render globe into ImageData (then blit)
+      // Clear pixels to transparent; background drawn separately
+      for (let i = 0; i < pix.length; i += 4) {
+        pix[i+3] = 0;
+      }
 
-            /* u,v */
-            var u = (lon / (2 * Math.PI)) + 0.5;
-            var v = 0.5 - (lat / Math.PI);
+      for (let py = 0; py < H; py++) {
+        const y = -(py + 0.5 - cy);
+        const yy = y * y;
+        for (let px = 0; px < W; px++) {
+          const x = (px + 0.5 - cx);
+          const d2 = x * x + yy;
 
-            /* wrap u */
-            while (u < 0) u = u + 1;
-            while (u >= 1) u = u - 1;
+          if (d2 > r2) continue; // outside sphere
 
-            /* clamp v */
-            if (v < 0) v = 0;
-            if (v > 1) v = 1;
+          // Sphere surface point in view space (camera looking down +Z)
+          // x,y are in screen plane, solve for z (front hemisphere)
+          const z = Math.sqrt(r2 - d2);
 
-            /* sample char */
-            var tx = Math.floor(u * mapW);
-            var ty = Math.floor(v * mapH);
+          // Normal (unit) in view space
+          const nx = x / radius;
+          const ny = y / radius;
+          const nz = z / radius;
 
-            if (tx < 0) tx = 0;
-            if (tx >= mapW) tx = mapW - 1;
-            if (ty < 0) ty = 0;
-            if (ty >= mapH) ty = mapH - 1;
+          // Rotate point around Y axis to get "world" coordinates for texture lookup
+          // (This makes the map spin)
+          const cos = Math.cos(rot), sin = Math.sin(rot);
+          const wx =  cos * nx + sin * nz;
+          const wy =  ny;
+          const wz = -sin * nx + cos * nz;
 
-            var ch = world[ty][tx];
+          // Convert world normal to lat/long (equirectangular)
+          // lon: atan2(wx, wz) in [-pi, pi], lat: asin(wy) in [-pi/2, pi/2]
+          const lon = Math.atan2(wx, wz);
+          const lat = Math.asin(wy);
 
-            /* color: ocean blue, land green */
-            if (ch === "W") ctx.fillStyle = "green";
-            else ctx.fillStyle = "blue";
+          // Map to (u,v)
+          const u = (lon / (2 * Math.PI)) + 0.5;     // 0..1 wrap
+          const v = 0.5 - (lat / Math.PI);           // 0..1 top->bottom
 
-            ctx.fillRect(px, py, 1, 1);
-          }
+          const [tr, tg, tb] = sampleMapRGB(u, v);
+
+          // Lighting (Lambert + a bit of ambient + subtle rim)
+          const ndotl = Math.max(0, nx*L[0] + ny*L[1] + nz*L[2]);
+          const ambient = 0.22;
+          const diffuse = 0.95 * ndotl;
+
+          // Rim based on view angle (near edges)
+          const rim = Math.pow(1 - nz, 2.0) * 0.25;
+
+          // Simple "night" darkening: if facing away from light, keep a small base
+          const shade = ambient + diffuse + rim;
+
+          let r = tr * shade;
+          let g = tg * shade;
+          let b = tb * shade;
+
+          // Atmospheric tint near rim
+          const atmo = Math.pow(1 - nz, 3.0) * 0.35;
+          r +=  60 * atmo;
+          g += 120 * atmo;
+          b += 220 * atmo;
+
+          // Write pixel
+          const i = (py * W + px) * 4;
+          pix[i+0] = r < 0 ? 0 : (r > 255 ? 255 : r);
+          pix[i+1] = g < 0 ? 0 : (g > 255 ? 255 : g);
+          pix[i+2] = b < 0 ? 0 : (b > 255 ? 255 : b);
+          pix[i+3] = 255;
         }
       }
-      requestAnimationFrame(renderFrame);
+
+      // Composite: background then globe
+      ctx.putImageData(img, 0, 0);
     }
 
-    renderFrame();
+    // Animation loop
+    let last = performance.now();
+    function loop(now) {
+      const dt = (now - last) / 1000;
+      last = now;
+      renderFrame(dt);
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
   </script>
 </body>
 </html>
